@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Musica</string>
+    <string name="pick_folder">Scegli cartella</string>
+    <string name="rescan">Aggiorna</string>
+    <string name="search_hint">Cerca titolo, artista o parole del testo</string>
+    <string name="voice">Cerca con la voce</string>
+    <string name="voice_prompt">Di\' un titolo o alcune parole della canzone</string>
+    <string name="hint_first">Tocca «Scegli cartella» e seleziona la cartella con la tua musica. L\'app la ricorderà.</string>
+    <string name="hint_ready">%1$d brani · %2$d con testo. Prova a dire «riproduci» e il titolo.</string>
+    <string name="scanning">Cerco i brani nella cartella…</string>
+    <string name="reading">Leggo titoli e testi: %1$d di %2$d…</string>
+    <string name="no_audio">Nessun file audio in questa cartella.</string>
+    <string name="empty">Nessun brano da mostrare.</string>
+    <string name="nothing_playing">Nessun brano in riproduzione</string>
+    <string name="bt_hint">Collega le cuffie Bluetooth al telefono: l\'audio passa lì da solo</string>
+    <string name="unknown_artist">Artista sconosciuto</string>
+    <string name="lyrics">Testo</string>
+    <string name="play">Riproduci</string>
+    <string name="pause">Pausa</string>
+    <string name="next">Successivo</string>
+    <string name="prev">Precedente</string>
+    <string name="shuffle">Casuale</string>
+    <string name="repeat">Ripeti tutto</string>
+</resources>
