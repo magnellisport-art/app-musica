@@ -11,8 +11,8 @@ android {
         applicationId = "it.marco.musica"
         minSdk = 26
         targetSdk = 34
-        versionCode = 9
-        versionName = "2.0.5"
+        versionCode = 10
+        versionName = "2.1"
     }
 
     buildTypes {

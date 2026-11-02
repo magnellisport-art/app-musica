@@ -74,6 +74,9 @@ class MainActivity : Activity() {
         private const val KEY_REPEAT = "repeat"
         private val PLAY_CMD = Regex("^(riproduci|suona|metti|ascolta|fammi sentire|play)\\s+(.+)$", RegexOption.IGNORE_CASE)
         private val SEARCH_CMD = Regex("^(cerca|trova)\\s+", RegexOption.IGNORE_CASE)
+        private val YT_CMD = Regex("^(?:cerca|trova|riproduci|metti|ascolta)?\\s*(.+?)\\s+su\\s+youtube(\\s+music)?$", RegexOption.IGNORE_CASE)
+        private const val PKG_YT_MUSIC = "com.google.android.apps.youtube.music"
+        private const val PKG_YT = "com.google.android.youtube"
 
         // ordinamento della lista
         private val SORTS = listOf(
@@ -183,6 +186,8 @@ class MainActivity : Activity() {
         sortText.setOnClickListener { chooseSort() }
         v<View>(R.id.modeBtn).setOnClickListener { chooseMode() }
         v<View>(R.id.playAll).setOnClickListener { playAll() }
+        v<View>(R.id.ytMusic).setOnClickListener { openYouTube(searchBox.text.toString(), music = true) }
+        v<View>(R.id.ytVideo).setOnClickListener { openYouTube(searchBox.text.toString(), music = false) }
 
         v<View>(R.id.mini).setOnClickListener { if (controller?.currentMediaItem != null) openNp() else toast(getString(R.string.tap_song)) }
         v<View>(R.id.miniPlay).setOnClickListener { togglePlay() }
@@ -392,6 +397,10 @@ class MainActivity : Activity() {
         v<ImageView>(R.id.modeDown).setColorFilter(s.faint)
         modeText.setTextColor(s.text)
         statusText.setTextColor(s.faint)
+        v<TextView>(R.id.ytLabel).setTextColor(s.muted)
+        listOf(R.id.ytMusic, R.id.ytVideo).forEach { id ->
+            v<TextView>(id).apply { background = rounded(s.surface, 17f); setTextColor(s.text) }
+        }
         v<TextView>(R.id.empty).setTextColor(s.muted)
 
         v<View>(R.id.mini).setBackgroundColor(s.surface)
@@ -664,6 +673,7 @@ class MainActivity : Activity() {
                 w.all { hay.contains(it) || lyr.contains(it) }
             }
         }
+        v<View>(R.id.ytRow).visibility = if (searchBox.text.isNotBlank()) View.VISIBLE else View.GONE
         styleTabs()
         sortText.text = SORTS.first { it.first == sortMode }.second
         sortText.visibility = if (tab == 1 && artist == null) View.INVISIBLE else View.VISIBLE
@@ -748,6 +758,12 @@ class MainActivity : Activity() {
 
     private fun handleSpoken(spoken: String) {
         var q = spoken.trim()
+        YT_CMD.find(q)?.let { m ->
+            val query = SEARCH_CMD.replace(m.groupValues[1], "")
+            searchBox.setText(query)
+            openYouTube(query, music = true)
+            return
+        }
         var autoplay = false
         PLAY_CMD.find(q)?.let { q = it.groupValues[2]; autoplay = true }
         if (autoplay) { tab = 0; artist = null }
@@ -755,7 +771,7 @@ class MainActivity : Activity() {
         searchBox.setText(q)
         searchBox.setSelection(q.length)
         if (autoplay && view.isNotEmpty()) playFrom(view[0])
-        statusText.text = if (view.isEmpty()) "«$spoken»: nessun brano trovato" else "«$spoken»: ${view.size} risultati"
+        statusText.text = if (view.isEmpty()) "«$spoken»: non c'è tra i tuoi brani. Puoi cercarlo su YouTube qui sotto." else "«$spoken»: ${view.size} risultati"
     }
 
     @Deprecated("Deprecated in Java")
@@ -777,6 +793,34 @@ class MainActivity : Activity() {
                 handleSpoken(text)
             }
         }
+    }
+
+    // ---------- YouTube ----------
+
+    /** Apre la ricerca nell'app di YouTube Music o di YouTube; se manca, nel browser. */
+    private fun openYouTube(query: String, music: Boolean) {
+        val q = query.trim()
+        if (q.isEmpty()) { toast("Scrivi o di' cosa cercare."); return }
+        controller?.pause()
+        val enc = Uri.encode(q)
+        val attempts = if (music) listOf(
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://music.youtube.com/search?q=$enc")).setPackage(PKG_YT_MUSIC),
+            Intent(Intent.ACTION_SEARCH).setPackage(PKG_YT).putExtra("query", q),
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://music.youtube.com/search?q=$enc"))
+        ) else listOf(
+            Intent(Intent.ACTION_SEARCH).setPackage(PKG_YT).putExtra("query", q),
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$enc")).setPackage(PKG_YT),
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$enc"))
+        )
+        for (i in attempts) {
+            try {
+                startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return
+            } catch (e: ActivityNotFoundException) {
+            } catch (e: SecurityException) {
+            }
+        }
+        toast("Non trovo né YouTube né un browser su questo telefono.")
     }
 
     // ---------- Riproduzione ----------

@@ -36,4 +36,7 @@
     <string name="close">Chiudi</string>
     <string name="lyrics_none">Questo brano non ha il testo salvato nel file.</string>
     <string name="tap_song">Tocca un brano per ascoltarlo</string>
+    <string name="yt_label">Cerca su YouTube:</string>
+    <string name="yt_music">YouTube Music</string>
+    <string name="yt_video">YouTube</string>
 </resources>

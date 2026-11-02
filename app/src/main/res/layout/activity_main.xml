@@ -308,6 +308,54 @@
             android:paddingBottom="4dp"
             android:textSize="13sp" />
 
+        <!-- Cerca su YouTube (compare quando c'è una ricerca) -->
+        <LinearLayout
+            android:id="@+id/ytRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingTop="4dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="6dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/ytLabel"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="@string/yt_label"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/ytMusic"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:layout_marginStart="8dp"
+                android:gravity="center"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:text="@string/yt_music"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/ytVideo"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:layout_marginStart="6dp"
+                android:gravity="center"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:text="@string/yt_video"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
         <!-- Elenco -->
         <FrameLayout
             android:layout_width="match_parent"
