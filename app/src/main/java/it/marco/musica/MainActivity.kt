@@ -58,6 +58,9 @@ sealed class Row {
     object Back : Row()
     data class Artist(val name: String, val count: Int, val albums: Int, val coverUri: String?) : Row()
     data class Song(val index: Int) : Row()
+    /** Una riga di testo: titolo di sezione o messaggio. */
+    data class Info(val text: String, val head: Boolean = false, val action: String? = null) : Row()
+    data class Yt(val v: YtVideo) : Row()
 }
 
 class MainActivity : Activity() {
@@ -205,8 +208,21 @@ class MainActivity : Activity() {
         searchBox.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun afterTextChanged(s: Editable?) = refresh()
+            override fun afterTextChanged(s: Editable?) {
+                refresh()
+                handler.removeCallbacks(ytDebounce)
+                if ((s?.trim()?.length ?: 0) >= 3) handler.postDelayed(ytDebounce, 1500)
+            }
         })
+
+        searchBox.setOnEditorActionListener { tv, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH) {
+                handler.removeCallbacks(ytDebounce)
+                searchYouTube(tv.text.toString())
+                (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(tv.windowToken, 0)
+                true
+            } else false
+        }
 
         seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, pr: Int, fromUser: Boolean) {
@@ -332,7 +348,113 @@ class MainActivity : Activity() {
                 val c = controller
                 if (tracks[r.index].uri == currentUri && c != null && c.isPlaying) openNp() else playFrom(r.index)
             }
+            is Row.Yt -> openVideo(r.v)
+            is Row.Info -> when (r.action) {
+                "key" -> askKey()
+                "retry" -> { ytQuery = ""; ytError = null; searchYouTube(searchBox.text.toString()) }
+            }
             null -> {}
+        }
+    }
+
+    // ---------- YouTube dentro l'app ----------
+
+    private var ytQuery = ""
+    private var ytResults: List<YtVideo> = emptyList()
+    private var ytLoading = false
+    private var ytError: String? = null
+    private val ytCache = HashMap<String, List<YtVideo>>()
+    private val ytThumbs = LruCache<String, Bitmap>(60)
+    private val ytDebounce = Runnable { searchYouTube(searchBox.text.toString()) }
+
+    private fun ytKey(): String? = prefs().getString("ytkey", null)?.trim()?.ifEmpty { null }
+
+    private fun searchYouTube(query: String) {
+        val q = query.trim()
+        if (q.length < 2) return
+        val key = ytKey() ?: run { refresh(); return }
+        ytCache[q.lowercase()]?.let { ytQuery = q; ytResults = it; ytError = null; ytLoading = false; refresh(); return }
+        if (q == ytQuery && (ytLoading || ytResults.isNotEmpty())) return
+        ytQuery = q; ytLoading = true; ytError = null; ytResults = emptyList()
+        refresh()
+        pool.execute {
+            val res = try { Result.success(YouTube.search(key, q)) } catch (e: Exception) { Result.failure(e) }
+            runOnUiThread {
+                if (ytQuery != q) return@runOnUiThread
+                ytLoading = false
+                res.onSuccess { ytResults = it; ytCache[q.lowercase()] = it }
+                res.onFailure { ytError = it.message ?: "YouTube non risponde." }
+                refresh()
+            }
+        }
+    }
+
+    private fun ytRows(w: List<String>): List<Row> {
+        if (w.isEmpty() || artist != null) return emptyList()
+        val q = searchBox.text.toString().trim()
+        val out = ArrayList<Row>()
+        out.add(Row.Info("Da YouTube", head = true))
+        when {
+            ytKey() == null -> out.add(Row.Info("Tocca qui per inserire la chiave YouTube e vedere i video in questa lista.", action = "key"))
+            ytLoading -> out.add(Row.Info("Cerco «$q» su YouTube…"))
+            ytError != null -> out.add(Row.Info(ytError!!, action = if (ytError!!.contains("chiave")) "key" else "retry"))
+            ytQuery.equals(q, true) && ytResults.isEmpty() -> out.add(Row.Info("Nessun video trovato."))
+            ytQuery.equals(q, true) -> ytResults.forEach { out.add(Row.Yt(it)) }
+            q.length >= 3 -> out.add(Row.Info("Cerco «$q» su YouTube…"))
+            else -> out.add(Row.Info("Tocca qui per cercare «$q» su YouTube.", action = "retry"))
+        }
+        return out
+    }
+
+    private fun askKey() {
+        sheet("Chiave YouTube") { box, d ->
+            box.addView(TextView(this).apply {
+                text = "Incolla qui la chiave della YouTube Data API v3 (inizia con «AIza»). Resta salvata solo su questo telefono."
+                textSize = 13f; setTextColor(skin.muted); setPadding(dpi(22), 0, dpi(22), dpi(10))
+            })
+            val field = EditText(this).apply {
+                setText(ytKey() ?: ""); hint = "AIza…"; textSize = 15f; setSingleLine()
+                setTextColor(skin.text); setHintTextColor(skin.faint)
+                background = rounded(skin.raised, 12f); setPadding(dpi(14), dpi(10), dpi(14), dpi(10))
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    setMargins(dpi(22), 0, dpi(22), 0)
+                }
+            }
+            box.addView(field)
+            box.addView(TextView(this).apply {
+                text = "Salva"; textSize = 15f; gravity = Gravity.CENTER; setTypeface(null, Typeface.BOLD)
+                setTextColor(skin.primaryInk); background = rounded(skin.primary, 23f)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dpi(46)).apply { setMargins(dpi(22), dpi(14), dpi(22), 0) }
+                setOnClickListener {
+                    prefs().edit().putString("ytkey", field.text.toString().trim()).apply()
+                    ytCache.clear(); ytQuery = ""; ytError = null
+                    d.dismiss()
+                    toast(if (field.text.isBlank()) "Chiave YouTube rimossa." else "Chiave YouTube salvata.")
+                    searchYouTube(searchBox.text.toString())
+                }
+            })
+        }
+    }
+
+    private fun openVideo(v: YtVideo) {
+        controller?.pause()
+        startActivity(Intent(this, VideoActivity::class.java)
+            .putExtra("id", v.id).putExtra("title", v.title).putExtra("channel", v.channel).putExtra("skin", skin.id))
+    }
+
+    private fun bindYtThumb(iv: ImageView, url: String) {
+        iv.tag = url
+        iv.clipToOutline = true
+        val cached = ytThumbs.get(url)
+        if (cached != null) { iv.setImageBitmap(cached); return }
+        iv.setImageDrawable(null)
+        if (url.isEmpty() || !loading.add(url)) return
+        pool.execute {
+            val bmp = YouTube.image(url)
+            runOnUiThread {
+                loading.remove(url)
+                if (bmp != null) { ytThumbs.put(url, bmp); if (iv.tag == url) iv.setImageBitmap(bmp) }
+            }
         }
     }
 
@@ -572,6 +694,7 @@ class MainActivity : Activity() {
         sheet("Cartella della musica") { box, d ->
             option(box, "Aggiorna la libreria", "Cerca brani nuovi o cancellati", false) { d.dismiss(); rescan() }
             option(box, "Scegli un'altra cartella", "La nuova cartella resterà memorizzata", false) { d.dismiss(); pickFolder() }
+            option(box, "Chiave YouTube", if (ytKey() == null) "Non inserita: serve per vedere i video nella ricerca" else "Inserita · tocca per cambiarla", false) { d.dismiss(); askKey() }
         }
     }
 
@@ -699,8 +822,9 @@ class MainActivity : Activity() {
             var ix = tracks.indices.filter(match)
             artist?.let { a -> ix = ix.filter { artistOf(tracks[it]) == a } }
             view = sortBy(ix, sortMode)
-            val songs = view.map { Row.Song(it) }
-            rows = if (artist != null) listOf<Row>(Row.Back) + songs else songs
+            val songs: List<Row> = view.map { Row.Song(it) }
+            val local = if (w.isNotEmpty() && songs.isEmpty()) listOf<Row>(Row.Info("Nessuno dei tuoi brani corrisponde alla ricerca.")) else songs
+            rows = (if (artist != null) listOf<Row>(Row.Back) else emptyList()) + local + ytRows(w)
             countText.text = when {
                 artist != null -> "${view.size} brani"
                 w.isEmpty() -> "${tracks.size} brani"
@@ -771,6 +895,8 @@ class MainActivity : Activity() {
         searchBox.setText(q)
         searchBox.setSelection(q.length)
         if (autoplay && view.isNotEmpty()) playFrom(view[0])
+        handler.removeCallbacks(ytDebounce)
+        searchYouTube(q)
         statusText.text = if (view.isEmpty()) "«$spoken»: non c'è tra i tuoi brani. Puoi cercarlo su YouTube qui sotto." else "«$spoken»: ${view.size} risultati"
     }
 
@@ -1116,11 +1242,13 @@ class MainActivity : Activity() {
         override fun getCount() = rows.size
         override fun getItem(position: Int): Any = rows[position]
         override fun getItemId(position: Int) = position.toLong()
-        override fun getViewTypeCount() = 3
+        override fun getViewTypeCount() = 5
         override fun getItemViewType(position: Int) = when (rows[position]) {
             is Row.Back -> 0
             is Row.Artist -> 1
             is Row.Song -> 2
+            is Row.Info -> 3
+            is Row.Yt -> 4
         }
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
@@ -1145,6 +1273,39 @@ class MainActivity : Activity() {
                     }
                     row.findViewById<TextView>(R.id.chev).setTextColor(skin.faint)
                     bindThumb(row.findViewById(R.id.thumb), r.coverUri)
+                    row
+                }
+                is Row.Info -> {
+                    val tv = (convertView as? TextView) ?: TextView(this@MainActivity)
+                    tv.text = r.text
+                    tv.setOnClickListener { handleRow(position) }
+                    tv.isClickable = r.action != null || r.head
+                    if (r.head) {
+                        tv.textSize = 17f; tv.setTextColor(skin.text); tv.typeface = Skins.typeface(this@MainActivity, skin)
+                        tv.setPadding(0, dpi(22), 0, dpi(8))
+                        tv.background = bottomLine(Skins.withAlpha(skin.text, 0.08f), 1)
+                    } else {
+                        tv.textSize = 14f; tv.typeface = Typeface.DEFAULT
+                        tv.setTextColor(if (r.action != null) skin.accent else skin.muted)
+                        tv.setPadding(0, dpi(14), 0, dpi(14))
+                        tv.background = null
+                    }
+                    tv
+                }
+                is Row.Yt -> {
+                    val row = convertView ?: layoutInflater.inflate(R.layout.item_yt, parent, false)
+                    row.setOnClickListener { handleRow(position) }
+                    if (row.foreground == null) row.foreground = ripple()
+                    row.background = bottomLine(Skins.withAlpha(skin.text, 0.08f), 1)
+                    row.findViewById<TextView>(R.id.ytTitle).apply { text = r.v.title; setTextColor(skin.text) }
+                    row.findViewById<TextView>(R.id.ytSub).apply {
+                        text = listOf(r.v.channel, r.v.views).filter { it.isNotEmpty() }.joinToString(" · ")
+                        setTextColor(skin.muted)
+                    }
+                    row.findViewById<TextView>(R.id.ytDur).apply {
+                        text = r.v.duration; visibility = if (r.v.duration.isEmpty()) View.GONE else View.VISIBLE
+                    }
+                    bindYtThumb(row.findViewById(R.id.ytThumb), r.v.thumb)
                     row
                 }
                 is Row.Song -> songView(r, convertView, parent).also { row ->
