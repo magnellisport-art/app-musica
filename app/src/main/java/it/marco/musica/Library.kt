@@ -98,23 +98,63 @@ object Library {
     }
 
     /** Copertina dell'album salvata dentro il file (ridotta per risparmiare memoria). */
-    fun artwork(ctx: Context, uri: String, maxSize: Int = 800): Bitmap? {
-        return try {
+    private val COVER_NAMES = listOf("cover", "folder", "front", "albumart", "album")
+
+    private fun decode(bytes: ByteArray, maxSize: Int): Bitmap? {
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+        if (o.outWidth <= 0) return null
+        var sample = 1
+        while (o.outWidth / (sample * 2) >= maxSize && o.outHeight / (sample * 2) >= maxSize) sample *= 2
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+    }
+
+    /** Un'immagine di copertina nella stessa cartella del brano (cover.jpg, folder.jpg…). */
+    private fun folderImage(ctx: Context, uri: Uri): ByteArray? = try {
+        val docId = DocumentsContract.getDocumentId(uri)
+        val parentId = docId.substringBeforeLast('/', "")
+        if (parentId.isEmpty() || parentId == docId) null else {
+            val children = DocumentsContract.buildChildDocumentsUriUsingTree(uri, parentId)
+            val cols = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE)
+            var best: String? = null
+            var bestRank = Int.MAX_VALUE
+            ctx.contentResolver.query(children, cols, null, null, null)?.use { c ->
+                while (c.moveToNext()) {
+                    val name = (c.getString(1) ?: continue).lowercase()
+                    val mime = c.getString(2) ?: ""
+                    if (!mime.startsWith("image/") && !name.endsWith(".jpg") && !name.endsWith(".jpeg") && !name.endsWith(".png")) continue
+                    val base = name.substringBeforeLast('.')
+                    val rank = COVER_NAMES.indexOfFirst { base.startsWith(it) }.let { if (it < 0) COVER_NAMES.size else it }
+                    if (rank < bestRank) { bestRank = rank; best = c.getString(0) }
+                }
+            }
+            best?.let { id ->
+                ctx.contentResolver.openInputStream(DocumentsContract.buildDocumentUriUsingTree(uri, id))?.use { it.readBytes() }
+            }
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    /** Copertina del brano: quella dentro il file, oppure l'immagine della cartella se è più grande. */
+    fun artwork(ctx: Context, uri: String, maxSize: Int = 1400): Bitmap? {
+        val u = Uri.parse(uri)
+        var embedded: Bitmap? = null
+        try {
             val r = MediaMetadataRetriever()
             try {
-                r.setDataSource(ctx, Uri.parse(uri))
-                val bytes = r.embeddedPicture ?: return null
-                val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
-                var sample = 1
-                while (o.outWidth / (sample * 2) >= maxSize && o.outHeight / (sample * 2) >= maxSize) sample *= 2
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+                r.setDataSource(ctx, u)
+                r.embeddedPicture?.let { embedded = decode(it, maxSize) }
             } finally {
                 r.release()
             }
-        } catch (e: Exception) {
-            null
+        } catch (e: Exception) { }
+        val small = embedded == null || minOf(embedded!!.width, embedded!!.height) < 600
+        if (small && maxSize > 300) {
+            val fromFolder = folderImage(ctx, u)?.let { decode(it, maxSize) }
+            if (fromFolder != null && (embedded == null || fromFolder.width > embedded!!.width)) return fromFolder
         }
+        return embedded
     }
 
     // ---- archivio locale, così la libreria non va riletta a ogni apertura ----

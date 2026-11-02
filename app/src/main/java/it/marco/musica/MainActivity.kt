@@ -231,7 +231,10 @@ class MainActivity : Activity() {
 
         // la copertina grande è quadrata
         val npCover = v<View>(R.id.npCover)
-        npCover.post { npCover.layoutParams = npCover.layoutParams.apply { height = minOf(npCover.width, dpi(420)) } }
+        npCover.addOnLayoutChangeListener { cv, l, _, r, _, _, _, _, _ ->
+            val want = minOf(r - l, dpi(420))
+            if (want > 0 && cv.layoutParams.height != want) cv.post { cv.layoutParams = cv.layoutParams.apply { height = want } }
+        }
         npCover.clipToOutline = true
         v<View>(R.id.miniCover).clipToOutline = true
 
@@ -910,10 +913,17 @@ class MainActivity : Activity() {
         }
         cover.setImageBitmap(bmp)
         mini.setImageBitmap(bmp)
-        // sfondo sfumato: copertina rimpicciolita e poi ingrandita
-        val w = 40
-        val h = (bmp.height * w / bmp.width.coerceAtLeast(1)).coerceAtLeast(1)
-        bg.setImageBitmap(Bitmap.createScaledBitmap(bmp, w, h, true))
+        // sfondo sfumato dietro la copertina (la copertina resta nitida)
+        if (Build.VERSION.SDK_INT >= 31) {
+            val w = 240
+            val h = (bmp.height * w / bmp.width.coerceAtLeast(1)).coerceAtLeast(1)
+            bg.setImageBitmap(Bitmap.createScaledBitmap(bmp, w, h, true))
+            bg.setRenderEffect(android.graphics.RenderEffect.createBlurEffect(dp(30f), dp(30f), android.graphics.Shader.TileMode.CLAMP))
+        } else {
+            val w = 40
+            val h = (bmp.height * w / bmp.width.coerceAtLeast(1)).coerceAtLeast(1)
+            bg.setImageBitmap(Bitmap.createScaledBitmap(bmp, w, h, true))
+        }
     }
 
     private fun openNp() {
@@ -976,7 +986,7 @@ class MainActivity : Activity() {
         iv.setImageResource(R.mipmap.ic_launcher)
         if (uri == null || uri in noArt || !loading.add(uri)) return
         pool.execute {
-            val bmp = Library.artwork(this, uri, 160)
+            val bmp = Library.artwork(this, uri, 200)
             runOnUiThread {
                 loading.remove(uri)
                 if (bmp == null) noArt.add(uri) else {
