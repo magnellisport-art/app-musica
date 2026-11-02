@@ -1,0 +1,29 @@
+name: Scarica foto dei temi
+
+on:
+  push:
+    paths: [ ".github/workflows/fetch-photos.yml" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scarica le foto (Unsplash, tramite Lorem Picsum)
+        run: |
+          mkdir -p photos
+          for id in 974 869 840 189 216 177 909 941 353; do
+            curl -fsSL -o photos/p$id.jpg "https://picsum.photos/id/$id/1080/1920.jpg"
+          done
+          ls -la photos
+      - name: Salva nel repository
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add photos
+          git commit -m "Foto dei temi [skip ci]" || echo "niente da salvare"
+          git push

@@ -3,6 +3,7 @@ name: Crea APK
 on:
   push:
     branches: [ main ]
+    paths-ignore: [ ".github/workflows/fetch-photos.yml", "photos/**" ]
   workflow_dispatch:
 
 permissions:
