@@ -113,6 +113,39 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
+            android:background="@drawable/bg_field"
+            android:orientation="horizontal"
+            android:padding="3dp">
+
+            <Button
+                android:id="@+id/tabSongs"
+                android:layout_width="0dp"
+                android:layout_height="38dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_pill_accent"
+                android:stateListAnimator="@null"
+                android:text="@string/tab_songs"
+                android:textAllCaps="false"
+                android:textColor="@color/accent_ink"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/tabArtists"
+                android:layout_width="0dp"
+                android:layout_height="38dp"
+                android:layout_weight="1"
+                android:background="@null"
+                android:stateListAnimator="@null"
+                android:text="@string/tab_artists"
+                android:textAllCaps="false"
+                android:textColor="@color/muted"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 

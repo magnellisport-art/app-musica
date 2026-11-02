@@ -15,6 +15,10 @@
     <string name="nothing_playing">Nessun brano in riproduzione</string>
     <string name="bt_hint">Collega le cuffie Bluetooth al telefono: l\'audio passa lì da solo</string>
     <string name="unknown_artist">Artista sconosciuto</string>
+    <string name="tab_songs">Brani</string>
+    <string name="tab_artists">Artisti</string>
+    <string name="back_artists">‹ Artisti</string>
+    <string name="lost_folder">Non riesco a leggere la cartella della musica: tocca «Scegli cartella» e selezionala di nuovo.</string>
     <string name="cover">Copertina album</string>
     <string name="lyrics">Testo</string>
     <string name="play">Riproduci</string>

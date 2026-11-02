@@ -24,6 +24,7 @@ import android.text.style.StyleSpan
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
+import android.util.LruCache
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.EditText
@@ -41,6 +42,12 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
+
+sealed class Row {
+    object Back : Row()
+    data class Artist(val name: String, val count: Int, val albums: Int, val coverUri: String?) : Row()
+    data class Song(val index: Int, val pos: Int) : Row()
+}
 
 class MainActivity : Activity() {
 
@@ -65,6 +72,13 @@ class MainActivity : Activity() {
     private var currentUri: String? = null
     private var scanning = false
     private var sortMode = 0
+    private var tab = 0               // 0 = Brani, 1 = Artisti
+    private var artist: String? = null
+    private var rows: List<Row> = emptyList()
+    private val thumbs = LruCache<String, Bitmap>(80)
+    private val thumbLoading = HashSet<String>()
+    private lateinit var tabSongs: Button
+    private lateinit var tabArtists: Button
     private var artUri: String? = null
     private val collator = java.text.Collator.getInstance(java.util.Locale.ITALIAN).apply { strength = java.text.Collator.PRIMARY }
 
@@ -135,7 +149,22 @@ class MainActivity : Activity() {
         adapter = TrackAdapter()
         list.adapter = adapter
         list.emptyView = findViewById(R.id.empty)
-        list.setOnItemClickListener { _, _, pos, _ -> playFrom(view[pos]) }
+        list.setOnItemClickListener { _, _, pos, _ ->
+            when (val r = rows.getOrNull(pos)) {
+                is Row.Back -> { artist = null; refresh() }
+                is Row.Artist -> {
+                    artist = r.name
+                    if (searchBox.text.isNotEmpty()) searchBox.setText("") else refresh()
+                    list.setSelection(0)
+                }
+                is Row.Song -> playFrom(r.index)
+                null -> {}
+            }
+        }
+        tabSongs = findViewById(R.id.tabSongs)
+        tabArtists = findViewById(R.id.tabArtists)
+        tabSongs.setOnClickListener { tab = 0; artist = null; refresh(); list.setSelection(0) }
+        tabArtists.setOnClickListener { tab = 1; artist = null; refresh(); list.setSelection(0) }
 
         findViewById<Button>(R.id.pickFolder).setOnClickListener { pickFolder() }
         findViewById<Button>(R.id.rescan).setOnClickListener { rescan() }
@@ -181,11 +210,8 @@ class MainActivity : Activity() {
         val tree = savedTree()
         when {
             tree == null -> statusText.text = getString(R.string.hint_first)
-            saved.isEmpty() || saved.any { it.modified == 0L } -> scan(tree)
-            else -> {
-                statusText.text = getString(R.string.hint_ready, saved.size, saved.count { it.lyrics.isNotEmpty() })
-                if (saved.any { !it.scanned }) readAllMeta(saved)
-            }
+            !canRead(tree) -> statusText.text = getString(R.string.lost_folder)
+            else -> scan(tree) // a ogni avvio cerca brani nuovi o cancellati
         }
     }
 
@@ -225,6 +251,13 @@ class MainActivity : Activity() {
     private fun savedTree(): Uri? =
         getSharedPreferences(PREFS, MODE_PRIVATE).getString(KEY_TREE, null)?.let { Uri.parse(it) }
 
+    private fun canRead(tree: Uri): Boolean =
+        contentResolver.persistedUriPermissions.any { it.uri == tree && it.isReadPermission }
+
+    override fun onBackPressed() {
+        if (artist != null) { artist = null; refresh() } else super.onBackPressed()
+    }
+
     private fun pickFolder() {
         val i = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
@@ -249,6 +282,12 @@ class MainActivity : Activity() {
             val found = Library.listAudio(this, tree)
             val old = tracks.associateBy { it.uri }
             // conserva i dati già letti per i brani che c'erano già
+            if (found.isEmpty() && old.isNotEmpty()) {
+                // cartella non raggiungibile: teniamo la libreria che c'era
+                scanning = false
+                runOnUiThread { statusText.text = getString(R.string.lost_folder) }
+                return@Thread
+            }
             val merged = found.map { t -> old[t.uri]?.takeIf { it.scanned }?.also { it.modified = t.modified } ?: t }
             runOnUiThread {
                 setTracks(merged)
@@ -292,9 +331,11 @@ class MainActivity : Activity() {
     private fun words(): List<String> =
         Library.norm(searchBox.text.toString()).split(Regex("\\s+")).filter { it.isNotEmpty() }
 
+    private fun artistOf(t: Track) = t.artist.ifEmpty { getString(R.string.unknown_artist) }
+
     private fun refresh() {
         val w = words()
-        view = tracks.indices.filter { i ->
+        val match = { i: Int ->
             if (w.isEmpty()) true else {
                 val t = tracks[i]
                 val hay = Library.norm("${t.title} ${t.artist} ${t.album} ${t.name} ${t.folder}")
@@ -302,9 +343,49 @@ class MainActivity : Activity() {
                 w.all { hay.contains(it) || lyr.contains(it) }
             }
         }
-        view = sorted(view)
-        countText.text = if (w.isEmpty()) "${tracks.size} brani" else "${view.size} di ${tracks.size}"
+        styleTab(tabSongs, tab == 0)
+        styleTab(tabArtists, tab == 1)
+        sortBtn.visibility = if (tab == 1 && artist == null) View.GONE else View.VISIBLE
+
+        if (tab == 1 && artist == null) {
+            val unknown = getString(R.string.unknown_artist)
+            val groups = tracks.indices.groupBy { artistOf(tracks[it]) }
+            val names = groups.keys.filter { n ->
+                w.isEmpty() || w.all { Library.norm(n).contains(it) } || groups.getValue(n).any(match)
+            }.sortedWith(Comparator { a, b ->
+                val ua = a == unknown; val ub = b == unknown
+                if (ua != ub) (if (ua) 1 else -1) else collator.compare(a, b)
+            })
+            view = emptyList()
+            rows = names.map { n ->
+                val ix = groups.getValue(n)
+                val coverIdx = ix.firstOrNull { tracks[it].album.isNotEmpty() } ?: ix.first()
+                Row.Artist(n, ix.size, ix.map { tracks[it].album }.filter { it.isNotEmpty() }.toSet().size, tracks[coverIdx].uri)
+            }
+            countText.text = "${names.size} artisti"
+        } else {
+            var ix = tracks.indices.filter(match)
+            artist?.let { a -> ix = ix.filter { artistOf(tracks[it]) == a } }
+            view = sorted(ix)
+            val songs = view.mapIndexed { k, i -> Row.Song(i, k + 1) }
+            rows = if (artist != null) listOf<Row>(Row.Back) + songs else songs
+            countText.text = when {
+                artist != null -> "${view.size} brani"
+                w.isEmpty() -> "${tracks.size} brani"
+                else -> "${view.size} di ${tracks.size}"
+            }
+        }
         adapter.notifyDataSetChanged()
+    }
+
+    private fun styleTab(b: Button, selected: Boolean) {
+        if (selected) {
+            b.setBackgroundResource(R.drawable.bg_pill_accent)
+            b.setTextColor(getColor(R.color.accent_ink))
+        } else {
+            b.background = null
+            b.setTextColor(muted)
+        }
     }
 
     private fun sorted(idx: List<Int>): List<Int> {
@@ -377,6 +458,7 @@ class MainActivity : Activity() {
         var q = spoken.trim()
         var autoplay = false
         PLAY_CMD.find(q)?.let { q = it.groupValues[2]; autoplay = true }
+        if (autoplay) { tab = 0; artist = null }
         q = SEARCH_CMD.replace(q, "")
         searchBox.setText(q)
         searchBox.setSelection(q.length)
@@ -541,16 +623,60 @@ class MainActivity : Activity() {
     // ---------- Elenco ----------
 
     inner class TrackAdapter : BaseAdapter() {
-        override fun getCount() = view.size
-        override fun getItem(position: Int) = tracks[view[position]]
-        override fun getItemId(position: Int) = view[position].toLong()
+        override fun getCount() = rows.size
+        override fun getItem(position: Int): Any = rows[position]
+        override fun getItemId(position: Int) = position.toLong()
+        override fun getViewTypeCount() = 3
+        override fun getItemViewType(position: Int) = when (rows[position]) {
+            is Row.Back -> 0
+            is Row.Artist -> 1
+            is Row.Song -> 2
+        }
 
-        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View =
+            when (val r = rows[position]) {
+                is Row.Back -> {
+                    val v = convertView ?: layoutInflater.inflate(R.layout.item_back, parent, false)
+                    v.findViewById<TextView>(R.id.who).text = artist ?: ""
+                    v
+                }
+                is Row.Artist -> artistView(r, convertView, parent)
+                is Row.Song -> songView(r, convertView, parent)
+            }
+
+        private fun artistView(r: Row.Artist, convertView: View?, parent: ViewGroup): View {
+            val v = convertView ?: layoutInflater.inflate(R.layout.item_artist, parent, false)
+            v.findViewById<TextView>(R.id.name).text = r.name
+            v.findViewById<TextView>(R.id.info).text =
+                (if (r.count == 1) "1 brano" else "${r.count} brani") + (if (r.albums > 0) " · ${r.albums} album" else "")
+            val iv = v.findViewById<ImageView>(R.id.thumb)
+            iv.clipToOutline = true
+            val uri = r.coverUri
+            iv.tag = uri
+            val cached = uri?.let { thumbs.get(it) }
+            if (cached != null) iv.setImageBitmap(cached) else {
+                iv.setImageResource(R.drawable.ic_launcher_fg)
+                if (uri != null && thumbLoading.add(uri)) {
+                    Thread {
+                        val bmp = Library.artwork(this@MainActivity, uri, 160)
+                        runOnUiThread {
+                            if (bmp != null) {
+                                thumbs.put(uri, bmp)
+                                if (iv.tag == uri) iv.setImageBitmap(bmp)
+                            }
+                        }
+                    }.start()
+                }
+            }
+            return v
+        }
+
+        private fun songView(r: Row.Song, convertView: View?, parent: ViewGroup): View {
             val v = convertView ?: layoutInflater.inflate(R.layout.item_track, parent, false)
-            val t = getItem(position)
+            val t = tracks[r.index]
             val playing = t.uri == currentUri
             v.findViewById<TextView>(R.id.num).apply {
-                text = if (playing) "♪" else (position + 1).toString()
+                text = if (playing) "♪" else r.pos.toString()
                 setTextColor(if (playing) accent else muted)
             }
             v.findViewById<TextView>(R.id.title).apply {
@@ -558,7 +684,7 @@ class MainActivity : Activity() {
                 setTextColor(if (playing) accent else ink)
             }
             v.findViewById<TextView>(R.id.artist).text =
-                t.artist.ifEmpty { t.folder.ifEmpty { getString(R.string.unknown_artist) } }
+                if (artist != null) t.album.ifEmpty { t.folder } else t.artist.ifEmpty { t.folder.ifEmpty { getString(R.string.unknown_artist) } }
             val sn = snippet(t, words())
             v.findViewById<TextView>(R.id.snippet).apply {
                 visibility = if (sn == null) View.GONE else View.VISIBLE
