@@ -260,16 +260,28 @@ class MainActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
+        reconnect()
+    }
+
+    private fun reconnect() {
+        if (controller != null || controllerFuture != null) return
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
         val future = MediaController.Builder(this, token).buildAsync()
         controllerFuture = future
         future.addListener({
             if (isDestroyed) return@addListener
-            val c = try { future.get() } catch (e: Exception) { null } ?: return@addListener
+            val c = try { future.get() } catch (e: Exception) {
+                controllerFuture = null
+                val msg = "Il lettore non si avvia: ${e.cause?.message ?: e.message ?: e.javaClass.simpleName}"
+                statusText.text = msg
+                toast(msg)
+                null
+            } ?: return@addListener
             controller = c
             c.addListener(playerListener)
             c.repeatMode = repeatConst()
             syncFromPlayer()
+            pending?.let { pending = null; it(c) }
             handler.post(ticker)
         }, MoreExecutors.directExecutor())
     }
@@ -296,7 +308,17 @@ class MainActivity : Activity() {
         override fun onIsPlayingChanged(isPlaying: Boolean) = updatePlayIcons()
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = syncFromPlayer()
         override fun onRepeatModeChanged(repeatMode: Int) = updateUpNext()
+        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            val name = currentTrack()?.title ?: "il brano"
+            val why = error.cause?.message ?: error.message ?: ""
+            val msg = "Non riesco a riprodurre «$name» (${error.errorCodeName}) $why".trim()
+            statusText.text = msg
+            toast(msg)
+        }
     }
+
+    /** Se il lettore non è ancora collegato, il comando parte appena lo è. */
+    private var pending: ((MediaController) -> Unit)? = null
 
     // ---------- Temi ----------
 
@@ -769,8 +791,13 @@ class MainActivity : Activity() {
 
     private fun startQueue(queue: List<Int>, startIndex: Int, positionMs: Long = 0L, play: Boolean = true) {
         val c = controller
-        if (c == null) { toast("Il lettore si sta avviando, riprova tra un attimo."); return }
         if (queue.isEmpty()) return
+        if (c == null) {
+            statusText.text = "Avvio il lettore…"
+            pending = { startQueue(queue, startIndex, positionMs, play) }
+            reconnect()
+            return
+        }
         c.shuffleModeEnabled = false
         c.repeatMode = repeatConst()
         c.setMediaItems(queue.map { toItem(tracks[it]) }, startIndex.coerceIn(0, queue.size - 1), positionMs)
