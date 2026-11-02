@@ -800,40 +800,60 @@ class MainActivity : Activity() {
 
     private fun baseList(): List<Int> = view.ifEmpty { sortBy(tracks.indices.toList(), sortMode) }
 
-    private fun startQueue(queue: List<Int>, startIndex: Int, positionMs: Long = 0L, play: Boolean = true) {
+    private fun stateName(c: MediaController) = when (c.playbackState) {
+        Player.STATE_IDLE -> "inattivo"
+        Player.STATE_BUFFERING -> "in caricamento"
+        Player.STATE_READY -> "pronto"
+        else -> "finito"
+    }
+
+    private fun startQueue(queueIn: List<Int>, startIndexIn: Int, positionMs: Long = 0L, play: Boolean = true) {
         val c = controller
-        if (queue.isEmpty()) return
+        if (queueIn.isEmpty()) return
         if (c == null) {
             statusText.text = "Avvio il lettore…"
-            pending = { startQueue(queue, startIndex, positionMs, play) }
+            pending = { startQueue(queueIn, startIndexIn, positionMs, play) }
             reconnect()
             return
         }
+        // al massimo 400 brani in coda, partendo da quello scelto
+        var queue = queueIn
+        var startIndex = startIndexIn.coerceIn(0, queue.size - 1)
+        if (queue.size > 400) {
+            queue = (0 until 400).map { queueIn[(startIndex + it) % queueIn.size] }
+            startIndex = 0
+        }
+        c.stop()
         c.shuffleModeEnabled = false
         c.repeatMode = repeatConst()
-        c.setMediaItems(queue.map { toItem(tracks[it]) }, startIndex.coerceIn(0, queue.size - 1), positionMs)
+        c.setMediaItems(queue.map { toItem(tracks[it]) }, startIndex, positionMs)
         c.prepare()
-        if (play) {
-            c.play()
-            // controllo: se dopo un attimo il lettore è ancora fermo, riprova e spiega il motivo
+        if (!play) return
+        c.play()
+        val wanted = tracks[queue[startIndex]]
+        // controllo: se il lettore resta fermo, riprova con il solo brano scelto
+        handler.postDelayed({
+            val cc = controller ?: return@postDelayed
+            if (cc.isPlaying || cc.playerError != null) return@postDelayed
+            val st1 = stateName(cc)
+            cc.stop()
+            cc.setMediaItem(toItem(wanted))
+            cc.prepare()
+            cc.play()
             handler.postDelayed({
-                val cc = controller ?: return@postDelayed
-                if (cc.isPlaying) return@postDelayed
-                if (!cc.playWhenReady) cc.play()
-                handler.postDelayed({
-                    val c2 = controller ?: return@postDelayed
-                    if (!c2.isPlaying && c2.playerError == null) {
-                        val st = when (c2.playbackState) {
-                            Player.STATE_IDLE -> "inattivo"; Player.STATE_BUFFERING -> "in caricamento"
-                            Player.STATE_READY -> "pronto"; else -> "finito"
-                        }
-                        val why = if (c2.playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS)
-                            ", l'audio è occupato da un'altra app" else ""
-                        statusText.text = "Il lettore è fermo (stato: $st$why). Tocca il tasto play."
-                    }
-                }, 2500)
-            }, 1500)
-        }
+                val c2 = controller ?: return@postDelayed
+                if (c2.isPlaying || c2.playerError != null) {
+                    if (c2.isPlaying) statusText.text = "In riproduzione: ${wanted.title} (avviato al secondo tentativo, stato prima: $st1)"
+                    return@postDelayed
+                }
+                val why = when (c2.playbackSuppressionReason) {
+                    Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS -> ", audio occupato da un'altra app"
+                    Player.PLAYBACK_SUPPRESSION_REASON_NONE -> ""
+                    else -> ", motivo ${c2.playbackSuppressionReason}"
+                }
+                statusText.text = "Il lettore è fermo (prima: $st1, ora: ${stateName(c2)}, avvio: ${c2.playWhenReady}$why, brani in coda: ${queueIn.size})."
+            }, 2500)
+        }, 2000)
     }
 
     private fun playFrom(index: Int) {
