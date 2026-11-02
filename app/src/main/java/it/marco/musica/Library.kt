@@ -1,6 +1,8 @@
 package it.marco.musica
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.DocumentsContract
@@ -18,7 +20,8 @@ data class Track(
     var artist: String,
     var album: String = "",
     var lyrics: String = "",
-    var scanned: Boolean = false
+    var scanned: Boolean = false,
+    var modified: Long = 0L
 )
 
 object Library {
@@ -46,7 +49,8 @@ object Library {
         val cols = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
-            DocumentsContract.Document.COLUMN_MIME_TYPE
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED
         )
         try {
             ctx.contentResolver.query(children, cols, null, null, null)?.use { c ->
@@ -62,7 +66,7 @@ object Library {
                         val m = ARTIST_TITLE.find(base)
                         val title = m?.groupValues?.get(2) ?: LEADING_NUM.replace(base, "")
                         val artist = m?.groupValues?.get(1) ?: ""
-                        out.add(Track(uri.toString(), name, path, title, artist))
+                        out.add(Track(uri.toString(), name, path, title, artist, modified = if (c.isNull(3)) 0L else c.getLong(3)))
                     }
                 }
             }
@@ -91,6 +95,26 @@ object Library {
         t.scanned = true
     }
 
+    /** Copertina dell'album salvata dentro il file (ridotta per risparmiare memoria). */
+    fun artwork(ctx: Context, uri: String, maxSize: Int = 800): Bitmap? {
+        return try {
+            val r = MediaMetadataRetriever()
+            try {
+                r.setDataSource(ctx, Uri.parse(uri))
+                val bytes = r.embeddedPicture ?: return null
+                val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+                var sample = 1
+                while (o.outWidth / (sample * 2) >= maxSize && o.outHeight / (sample * 2) >= maxSize) sample *= 2
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+            } finally {
+                r.release()
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     // ---- archivio locale, così la libreria non va riletta a ogni apertura ----
 
     private fun file(ctx: Context) = File(ctx.filesDir, "libreria.json")
@@ -101,7 +125,7 @@ object Library {
             arr.put(JSONObject().apply {
                 put("u", it.uri); put("n", it.name); put("f", it.folder)
                 put("t", it.title); put("a", it.artist); put("al", it.album)
-                put("l", it.lyrics); put("s", it.scanned)
+                put("l", it.lyrics); put("s", it.scanned); put("m", it.modified)
             })
         }
         try { file(ctx).writeText(arr.toString()) } catch (e: Exception) { }
@@ -117,7 +141,7 @@ object Library {
                 Track(
                     o.getString("u"), o.optString("n"), o.optString("f"),
                     o.optString("t"), o.optString("a"), o.optString("al"),
-                    o.optString("l"), o.optBoolean("s")
+                    o.optString("l"), o.optBoolean("s"), o.optLong("m")
                 )
             }
         } catch (e: Exception) {

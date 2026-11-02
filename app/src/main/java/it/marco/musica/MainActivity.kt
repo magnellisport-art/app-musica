@@ -7,6 +7,7 @@ import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
@@ -24,6 +25,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ListView
@@ -48,6 +50,11 @@ class MainActivity : Activity() {
         private const val REQ_NOTIF = 3
         private const val PREFS = "musica"
         private const val KEY_TREE = "tree"
+        private const val KEY_SORT = "sort"
+        private val SORT_NAMES = arrayOf(
+            "Cartella", "Titolo (A-Z)", "Titolo (Z-A)", "Artista (A-Z)", "Album (A-Z)",
+            "Ultima modifica (più recenti)", "Ultima modifica (meno recenti)"
+        )
         private val PLAY_CMD = Regex("^(riproduci|suona|metti|ascolta|fammi sentire|play)\\s+(.+)$", RegexOption.IGNORE_CASE)
         private val SEARCH_CMD = Regex("^(cerca|trova)\\s+", RegexOption.IGNORE_CASE)
     }
@@ -57,6 +64,9 @@ class MainActivity : Activity() {
     private var view: List<Int> = emptyList()
     private var currentUri: String? = null
     private var scanning = false
+    private var sortMode = 0
+    private var artUri: String? = null
+    private val collator = java.text.Collator.getInstance(java.util.Locale.ITALIAN).apply { strength = java.text.Collator.PRIMARY }
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller: MediaController? = null
@@ -77,6 +87,9 @@ class MainActivity : Activity() {
     private lateinit var shuffleBtn: ImageButton
     private lateinit var repeatBtn: ImageButton
     private lateinit var adapter: TrackAdapter
+    private lateinit var sortBtn: Button
+    private lateinit var bgArt: ImageView
+    private lateinit var cover: ImageView
 
     private var accent = 0
     private var ink = 0
@@ -110,6 +123,14 @@ class MainActivity : Activity() {
         playBtn = findViewById(R.id.play)
         shuffleBtn = findViewById(R.id.shuffle)
         repeatBtn = findViewById(R.id.repeat)
+        sortBtn = findViewById(R.id.sort)
+        bgArt = findViewById(R.id.bgArt)
+        cover = findViewById(R.id.cover)
+        cover.clipToOutline = true
+
+        sortMode = getSharedPreferences(PREFS, MODE_PRIVATE).getInt(KEY_SORT, 0).coerceIn(0, SORT_NAMES.size - 1)
+        updateSortLabel()
+        sortBtn.setOnClickListener { chooseSort() }
 
         adapter = TrackAdapter()
         list.adapter = adapter
@@ -160,7 +181,7 @@ class MainActivity : Activity() {
         val tree = savedTree()
         when {
             tree == null -> statusText.text = getString(R.string.hint_first)
-            saved.isEmpty() -> scan(tree)
+            saved.isEmpty() || saved.any { it.modified == 0L } -> scan(tree)
             else -> {
                 statusText.text = getString(R.string.hint_ready, saved.size, saved.count { it.lyrics.isNotEmpty() })
                 if (saved.any { !it.scanned }) readAllMeta(saved)
@@ -228,7 +249,7 @@ class MainActivity : Activity() {
             val found = Library.listAudio(this, tree)
             val old = tracks.associateBy { it.uri }
             // conserva i dati già letti per i brani che c'erano già
-            val merged = found.map { t -> old[t.uri]?.takeIf { it.scanned } ?: t }
+            val merged = found.map { t -> old[t.uri]?.takeIf { it.scanned }?.also { it.modified = t.modified } ?: t }
             runOnUiThread {
                 setTracks(merged)
                 if (merged.isEmpty()) statusText.text = getString(R.string.no_audio)
@@ -281,8 +302,42 @@ class MainActivity : Activity() {
                 w.all { hay.contains(it) || lyr.contains(it) }
             }
         }
+        view = sorted(view)
         countText.text = if (w.isEmpty()) "${tracks.size} brani" else "${view.size} di ${tracks.size}"
         adapter.notifyDataSetChanged()
+    }
+
+    private fun sorted(idx: List<Int>): List<Int> {
+        fun byText(key: (Track) -> String) = Comparator<Int> { a, b -> collator.compare(key(tracks[a]), key(tracks[b])) }
+        val c: Comparator<Int> = when (sortMode) {
+            1 -> byText { it.title }
+            2 -> byText { it.title }.reversed()
+            3 -> byText { it.artist.ifEmpty { "\uFFFF" } }.then(byText { it.title })
+            4 -> byText { it.album.ifEmpty { "\uFFFF" } }.then(byText { it.title })
+            5 -> compareByDescending<Int> { tracks[it].modified }
+            6 -> compareBy<Int> { tracks[it].modified }
+            else -> return idx // ordine della cartella
+        }
+        return idx.sortedWith(c)
+    }
+
+    private fun updateSortLabel() {
+        sortBtn.text = "Ordina: " + SORT_NAMES[sortMode].substringBefore(" (")
+    }
+
+    private fun chooseSort() {
+        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Ordina i brani per")
+            .setSingleChoiceItems(SORT_NAMES, sortMode) { d, which ->
+                sortMode = which
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putInt(KEY_SORT, which).apply()
+                updateSortLabel()
+                refresh()
+                list.setSelection(0)
+                d.dismiss()
+            }
+            .setNegativeButton("Annulla", null)
+            .show()
     }
 
     private fun snippet(t: Track, w: List<String>): CharSequence? {
@@ -396,11 +451,37 @@ class MainActivity : Activity() {
             val sub = listOf(t?.artist ?: md?.artist?.toString() ?: "", t?.album ?: "").filter { it.isNotEmpty() }
             nowArtist.text = if (sub.isEmpty()) getString(R.string.unknown_artist) else sub.joinToString(" · ")
         }
+        if (currentUri != artUri) loadArt(currentUri)
         lyricsBtn.isEnabled = t?.lyrics?.isNotEmpty() == true
         lyricsBtn.alpha = if (lyricsBtn.isEnabled) 1f else 0.4f
         updatePlayIcon()
         updateToggles()
         adapter.notifyDataSetChanged()
+    }
+
+    private fun loadArt(uri: String?) {
+        artUri = uri
+        if (uri == null) { showArt(null); return }
+        Thread {
+            val bmp = Library.artwork(this, uri)
+            runOnUiThread { if (artUri == uri && !isDestroyed) showArt(bmp) }
+        }.start()
+    }
+
+    private fun showArt(bmp: Bitmap?) {
+        if (bmp == null) {
+            bgArt.animate().alpha(0f).setDuration(400).withEndAction { bgArt.setImageDrawable(null) }.start()
+            cover.setImageResource(R.drawable.ic_launcher_fg)
+            return
+        }
+        cover.setImageBitmap(bmp)
+        // sfondo sfocato: immagine rimpicciolita e poi ingrandita
+        val w = 48
+        val h = (bmp.height * w / bmp.width.coerceAtLeast(1)).coerceAtLeast(1)
+        val small = Bitmap.createScaledBitmap(bmp, w, h, true)
+        bgArt.setImageBitmap(small)
+        bgArt.alpha = 0f
+        bgArt.animate().alpha(1f).setDuration(500).start()
     }
 
     private fun updatePlayIcon() {

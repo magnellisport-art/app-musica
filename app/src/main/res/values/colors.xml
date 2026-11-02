@@ -7,5 +7,7 @@
     <color name="muted">#9AA1BD</color>
     <color name="accent">#FF8A3D</color>
     <color name="accent_ink">#1A0D03</color>
+    <color name="scrim">#C20F1222</color>
+    <color name="panel">#E6181C31</color>
     <color name="hi">#2A2236</color>
 </resources>
