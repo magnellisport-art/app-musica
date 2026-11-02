@@ -16,8 +16,8 @@ jobs:
       - name: Scarica le foto (Unsplash, tramite Lorem Picsum)
         run: |
           mkdir -p photos
-          for id in 974 869 840 189 216 177 909 941 353; do
-            curl -fsSL -o photos/p$id.jpg "https://picsum.photos/id/$id/1080/1920.jpg"
+          for id in 974 840 189 177 941; do
+            curl -fsSL -o photos/hd$id.jpg "https://picsum.photos/id/$id/1440/2560.jpg"
           done
           ls -la photos
       - name: Salva nel repository
