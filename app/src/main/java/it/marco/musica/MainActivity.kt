@@ -173,18 +173,7 @@ class MainActivity : Activity() {
         adapter = TrackAdapter()
         list.adapter = adapter
         list.emptyView = v(R.id.empty)
-        list.setOnItemClickListener { _, _, pos, _ ->
-            when (val r = rows.getOrNull(pos)) {
-                is Row.Back -> { artist = null; refresh() }
-                is Row.Artist -> {
-                    artist = r.name
-                    if (searchBox.text.isNotEmpty()) searchBox.setText("") else refresh()
-                    list.setSelection(0)
-                }
-                is Row.Song -> if (tracks[r.index].uri == currentUri) openNp() else playFrom(r.index)
-                null -> {}
-            }
-        }
+        list.setOnItemClickListener { _, _, pos, _ -> handleRow(pos) }
 
         tabSongs.setOnClickListener { tab = 0; artist = null; refresh(); list.setSelection(0) }
         tabArtists.setOnClickListener { tab = 1; artist = null; refresh(); list.setSelection(0) }
@@ -319,6 +308,28 @@ class MainActivity : Activity() {
 
     /** Se il lettore non è ancora collegato, il comando parte appena lo è. */
     private var pending: ((MediaController) -> Unit)? = null
+
+    private fun ripple(): android.graphics.drawable.Drawable? {
+        val tv = TypedValue()
+        theme.resolveAttribute(android.R.attr.selectableItemBackground, tv, true)
+        return getDrawable(tv.resourceId)
+    }
+
+    private fun handleRow(pos: Int) {
+        when (val r = rows.getOrNull(pos)) {
+            is Row.Back -> { artist = null; refresh() }
+            is Row.Artist -> {
+                artist = r.name
+                if (searchBox.text.isNotEmpty()) searchBox.setText("") else refresh()
+                list.setSelection(0)
+            }
+            is Row.Song -> {
+                val c = controller
+                if (tracks[r.index].uri == currentUri && c != null && c.isPlaying) openNp() else playFrom(r.index)
+            }
+            null -> {}
+        }
+    }
 
     // ---------- Temi ----------
 
@@ -802,7 +813,27 @@ class MainActivity : Activity() {
         c.repeatMode = repeatConst()
         c.setMediaItems(queue.map { toItem(tracks[it]) }, startIndex.coerceIn(0, queue.size - 1), positionMs)
         c.prepare()
-        if (play) c.play()
+        if (play) {
+            c.play()
+            // controllo: se dopo un attimo il lettore è ancora fermo, riprova e spiega il motivo
+            handler.postDelayed({
+                val cc = controller ?: return@postDelayed
+                if (cc.isPlaying) return@postDelayed
+                if (!cc.playWhenReady) cc.play()
+                handler.postDelayed({
+                    val c2 = controller ?: return@postDelayed
+                    if (!c2.isPlaying && c2.playerError == null) {
+                        val st = when (c2.playbackState) {
+                            Player.STATE_IDLE -> "inattivo"; Player.STATE_BUFFERING -> "in caricamento"
+                            Player.STATE_READY -> "pronto"; else -> "finito"
+                        }
+                        val why = if (c2.playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS)
+                            ", l'audio è occupato da un'altra app" else ""
+                        statusText.text = "Il lettore è fermo (stato: $st$why). Tocca il tasto play."
+                    }
+                }, 2500)
+            }, 1500)
+        }
     }
 
     private fun playFrom(index: Int) {
@@ -1041,6 +1072,7 @@ class MainActivity : Activity() {
             when (val r = rows[position]) {
                 is Row.Back -> {
                     val row = convertView ?: layoutInflater.inflate(R.layout.item_back, parent, false)
+                    row.setOnClickListener { handleRow(position) }
                     row.findViewById<TextView>(R.id.backLabel).setTextColor(skin.muted)
                     row.findViewById<TextView>(R.id.who).apply {
                         text = artist ?: ""; setTextColor(skin.text); typeface = Skins.typeface(this@MainActivity, skin)
@@ -1049,6 +1081,7 @@ class MainActivity : Activity() {
                 }
                 is Row.Artist -> {
                     val row = convertView ?: layoutInflater.inflate(R.layout.item_artist, parent, false)
+                    row.setOnClickListener { handleRow(position) }
                     row.background = bottomLine(Skins.withAlpha(skin.text, 0.08f), 1)
                     row.findViewById<TextView>(R.id.name).apply { text = r.name; setTextColor(skin.text) }
                     row.findViewById<TextView>(R.id.info).apply {
@@ -1059,7 +1092,10 @@ class MainActivity : Activity() {
                     bindThumb(row.findViewById(R.id.thumb), r.coverUri)
                     row
                 }
-                is Row.Song -> songView(r, convertView, parent)
+                is Row.Song -> songView(r, convertView, parent).also { row ->
+                    row.setOnClickListener { handleRow(position) }
+                    if (row.foreground == null) row.foreground = ripple()
+                }
             }
 
         private fun songView(r: Row.Song, convertView: View?, parent: ViewGroup): View {
