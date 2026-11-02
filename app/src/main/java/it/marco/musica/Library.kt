@@ -21,7 +21,8 @@ data class Track(
     var album: String = "",
     var lyrics: String = "",
     var scanned: Boolean = false,
-    var modified: Long = 0L
+    var modified: Long = 0L,
+    var duration: Long = 0L
 )
 
 object Library {
@@ -84,6 +85,7 @@ object Library {
                 r.setDataSource(ctx, uri)
                 r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() }?.let { t.title = it.trim() }
                 r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.takeIf { it.isNotBlank() }?.let { t.artist = it.trim() }
+                r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let { t.duration = it }
                 r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM)?.takeIf { it.isNotBlank() }?.let { t.album = it.trim() }
             } finally {
                 r.release()
@@ -125,7 +127,7 @@ object Library {
             arr.put(JSONObject().apply {
                 put("u", it.uri); put("n", it.name); put("f", it.folder)
                 put("t", it.title); put("a", it.artist); put("al", it.album)
-                put("l", it.lyrics); put("s", it.scanned); put("m", it.modified)
+                put("l", it.lyrics); put("s", it.scanned); put("m", it.modified); put("d", it.duration)
             })
         }
         try { file(ctx).writeText(arr.toString()) } catch (e: Exception) { }
@@ -141,7 +143,7 @@ object Library {
                 Track(
                     o.getString("u"), o.optString("n"), o.optString("f"),
                     o.optString("t"), o.optString("a"), o.optString("al"),
-                    o.optString("l"), o.optBoolean("s"), o.optLong("m")
+                    o.optString("l"), o.optBoolean("s"), o.optLong("m"), o.optLong("d")
                 )
             }
         } catch (e: Exception) {

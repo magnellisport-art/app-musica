@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Musica</string>
+    <string name="app_name">Musicvibes</string>
     <string name="pick_folder">Scegli cartella</string>
     <string name="rescan">Aggiorna</string>
     <string name="search_hint">Cerca titolo, artista o parole del testo</string>
@@ -27,4 +27,13 @@
     <string name="prev">Precedente</string>
     <string name="shuffle">Casuale</string>
     <string name="repeat">Ripeti tutto</string>
+    <string name="play_all">Riproduci tutti</string>
+    <string name="in_play">In riproduzione</string>
+    <string name="voice_short">Voce</string>
+    <string name="theme">Tema</string>
+    <string name="folder">Cartella</string>
+    <string name="mode">Modalità di riproduzione</string>
+    <string name="close">Chiudi</string>
+    <string name="lyrics_none">Questo brano non ha il testo salvato nel file.</string>
+    <string name="tap_song">Tocca un brano per ascoltarlo</string>
 </resources>
