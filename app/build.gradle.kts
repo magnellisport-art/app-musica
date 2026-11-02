@@ -11,13 +11,27 @@ android {
         applicationId = "it.marco.musica"
         minSdk = 26
         targetSdk = 34
-        versionCode = 10
-        versionName = "2.1"
+        versionCode = 11
+        versionName = "2.1.1"
+    }
+
+    // Firma sempre uguale: così ogni nuova versione si installa sopra la precedente
+    signingConfigs {
+        create("musicvibes") {
+            storeFile = file("musicvibes.keystore")
+            storePassword = "tszyMeXQKahe97Sa8jS8xFnB"
+            keyAlias = "musicvibes"
+            keyPassword = "tszyMeXQKahe97Sa8jS8xFnB"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("musicvibes")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("musicvibes")
         }
     }
     compileOptions {
