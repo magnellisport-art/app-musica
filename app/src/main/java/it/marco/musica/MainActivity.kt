@@ -800,13 +800,12 @@ class MainActivity : Activity() {
 
     private fun baseList(): List<Int> = view.ifEmpty { sortBy(tracks.indices.toList(), sortMode) }
 
-    private fun stateName(c: MediaController) = when (c.playbackState) {
-        Player.STATE_IDLE -> "inattivo"
-        Player.STATE_BUFFERING -> "in caricamento"
-        Player.STATE_READY -> "pronto"
-        else -> "finito"
-    }
+    private var queueGen = 0
 
+    /**
+     * Avvia subito il brano scelto da solo, poi aggiunge il resto della coda a piccoli gruppi.
+     * Passare tutta la coda in un colpo solo rallentava l'avvio.
+     */
     private fun startQueue(queueIn: List<Int>, startIndexIn: Int, positionMs: Long = 0L, play: Boolean = true) {
         val c = controller
         if (queueIn.isEmpty()) return
@@ -816,44 +815,36 @@ class MainActivity : Activity() {
             reconnect()
             return
         }
-        // al massimo 400 brani in coda, partendo da quello scelto
-        var queue = queueIn
-        var startIndex = startIndexIn.coerceIn(0, queue.size - 1)
-        if (queue.size > 400) {
-            queue = (0 until 400).map { queueIn[(startIndex + it) % queueIn.size] }
-            startIndex = 0
-        }
-        c.stop()
+        val gen = ++queueGen
+        val start = startIndexIn.coerceIn(0, queueIn.size - 1)
         c.shuffleModeEnabled = false
         c.repeatMode = repeatConst()
-        c.setMediaItems(queue.map { toItem(tracks[it]) }, startIndex, positionMs)
+        c.setMediaItem(toItem(tracks[queueIn[start]]), positionMs)
         c.prepare()
-        if (!play) return
-        c.play()
-        val wanted = tracks[queue[startIndex]]
-        // controllo: se il lettore resta fermo, riprova con il solo brano scelto
-        handler.postDelayed({
-            val cc = controller ?: return@postDelayed
-            if (cc.isPlaying || cc.playerError != null) return@postDelayed
-            val st1 = stateName(cc)
-            cc.stop()
-            cc.setMediaItem(toItem(wanted))
-            cc.prepare()
-            cc.play()
-            handler.postDelayed({
-                val c2 = controller ?: return@postDelayed
-                if (c2.isPlaying || c2.playerError != null) {
-                    if (c2.isPlaying) statusText.text = "In riproduzione: ${wanted.title} (avviato al secondo tentativo, stato prima: $st1)"
-                    return@postDelayed
+        if (play) c.play()
+
+        val after = queueIn.subList(start + 1, queueIn.size).chunked(40)
+        val before = queueIn.subList(0, start).chunked(40)
+        var step = 0
+        var insertAt = 0
+        val addNext = object : Runnable {
+            override fun run() {
+                val cc = controller ?: return
+                if (gen != queueGen) return
+                when {
+                    step < after.size -> cc.addMediaItems(after[step].map { toItem(tracks[it]) })
+                    step < after.size + before.size -> {
+                        val chunk = before[step - after.size]
+                        cc.addMediaItems(insertAt, chunk.map { toItem(tracks[it]) })
+                        insertAt += chunk.size
+                    }
+                    else -> { updateUpNext(); return }
                 }
-                val why = when (c2.playbackSuppressionReason) {
-                    Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS -> ", audio occupato da un'altra app"
-                    Player.PLAYBACK_SUPPRESSION_REASON_NONE -> ""
-                    else -> ", motivo ${c2.playbackSuppressionReason}"
-                }
-                statusText.text = "Il lettore è fermo (prima: $st1, ora: ${stateName(c2)}, avvio: ${c2.playWhenReady}$why, brani in coda: ${queueIn.size})."
-            }, 2500)
-        }, 2000)
+                step++
+                handler.postDelayed(this, 120)
+            }
+        }
+        handler.postDelayed(addNext, 600)
     }
 
     private fun playFrom(index: Int) {
